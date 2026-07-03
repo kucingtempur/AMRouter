@@ -938,7 +938,7 @@ function GenericExampleCard({ providerId, kind }) {
   const allowManualModel = needsModel && kindModels.length === 0;
   const [selectedModel, setSelectedModel] = useState(kindModels[0]?.id ?? "");
   const selectedModelObj = kindModels.find((m) => m.id === selectedModel);
-  console.log("DEBUG: selectedModel =", selectedModel, "selectedModelObj =", selectedModelObj, "kindModels =", kindModels);
+
   const supportsEdit = !!selectedModelObj?.capabilities?.includes("edit");
   const supportsMask = !!selectedModelObj?.capabilities?.includes("mask");
 
