@@ -533,7 +533,7 @@ def run_automation(email, password, invite_link, proxy=None, headless=True):
                 try:
                     if "leonardo.ai/api/auth/get-session" not in response.url: return
                     if response.status != 200: return
-                    body = response.text()  # sync in Playwright Python
+                    body = response.text()
                     if not body or body.strip() == 'null': return
                     import json as _json
                     data = _json.loads(body)
@@ -548,29 +548,51 @@ def run_automation(email, password, invite_link, proxy=None, headless=True):
             log_step("Membuka Leonardo AI — login page...")
             page.goto("https://app.leonardo.ai/auth/login", wait_until="domcontentloaded", timeout=60000)
             time.sleep(3)
+
+            # Setup popup listener SEBELUM klik (event-driven)
+            canva_popup = {"page": None}
+            def on_popup(popup_page):
+                canva_popup["page"] = popup_page
+                log_step(f"Popup terdeteksi: {popup_page.url[:60]}")
+            browser.on("page", on_popup)
+
             log_step("Klik 'Continue with Canva'...")
             click_first(page, ["button:has-text('Continue with Canva')"], timeout_ms=15000)
-            log_step("Menunggu popup OAuth Canva...")
-            time.sleep(5)
+            log_step(f"Tombol diklik. URL sekarang: {page.url[:60]}")
+            time.sleep(8)  # tunggu lebih lama
 
-            # Handle Canva Authorize popup
+            log_step(f"Pages setelah klik: {[p.url[:50] for p in browser.pages]}")
+
+            # Handle berdasarkan hasilnya
             auth_page = None
-            for pg in browser.pages:
-                if "canva.com" in pg.url and pg != page:
-                    auth_page = pg; break
 
-            if auth_page:
-                log_step(f"OAuth popup ditemukan: {auth_page.url[:60]}")
+            # 1. Popup ter-capture via event listener
+            if canva_popup["page"]:
+                auth_page = canva_popup["page"]
+                log_step(f"OAuth via popup event: {auth_page.url[:60]}")
+                try: auth_page.wait_for_load_state("domcontentloaded", timeout=5000)
+                except: pass
                 _click_canva_authorize_v2(auth_page, email)
-                log_step("Authorize diklik, tunggu redirect ke Leonardo...")
                 time.sleep(5)
+
+            # 2. Main page redirect ke Canva
+            elif "canva.com" in page.url.lower():
+                auth_page = page
+                log_step(f"OAuth inline di main page: {page.url[:60]}")
+                _click_canva_authorize_v2(page, email)
+                time.sleep(5)
+
+            # 3. Scan semua pages
             else:
-                log_step(f"Tidak ada popup — cek apakah redirect inline. Pages: {[p.url[:40] for p in browser.pages]}")
-                # Cek apakah main page redirect ke canva OAuth (inline, bukan popup)
-                if "canva.com" in page.url:
-                    log_step(f"Redirect inline ke Canva: {page.url[:60]}")
-                    _click_canva_authorize_v2(page, email)
-                    time.sleep(5)
+                for pg in browser.pages:
+                    if "canva.com" in pg.url and pg != page:
+                        auth_page = pg
+                        log_step(f"OAuth popup via scan: {pg.url[:60]}")
+                        _click_canva_authorize_v2(pg, email)
+                        time.sleep(5)
+                        break
+                else:
+                    log_step(f"PERINGATAN: Tidak ada redirect ke Canva! URL={page.url}")
 
             # Tunggu Leonardo dashboard atau onboarding (max 90s)
             log_step("Menunggu redirect ke Leonardo dashboard/onboarding...")
