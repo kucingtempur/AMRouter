@@ -479,30 +479,84 @@ def run_automation(email, password, invite_link, proxy=None, headless=True):
     try:
         with ctx as browser:
             page = browser.new_page()
+
             # 1. Canva Enroll
             if not enroll_canva_via_email(page, invite_link, email, password, settings):
-                log_step("Gagal pendaftaran Canva")
+                sys.stdout.write(json.dumps({"status": "error", "message": "Gagal pendaftaran Canva"}) + "\n")
+                sys.stdout.flush()
                 return False
-            
+
+            # Emit canva_enrolled agar Node update DB
+            sys.stdout.write(json.dumps({"canva_enrolled": True}) + "\n")
+            sys.stdout.flush()
+
             # 2. Leonardo Signup
             log_step("Membuka Leonardo AI...")
-            page.goto("https://app.leonardo.ai/auth/login", wait_until="domcontentloaded")
-            click_first(page, ["button:has-text('Continue with Canva')"], timeout_ms=10000)
-            
+            page.goto("https://app.leonardo.ai/auth/login", wait_until="domcontentloaded", timeout=60000)
+            time.sleep(3)
+            click_first(page, ["button:has-text('Continue with Canva')"], timeout_ms=15000)
             time.sleep(5)
+
             # Handle Canva Authorize popup
             auth_page = None
             for pg in browser.pages:
                 if "canva.com/api/oauth/authorize" in pg.url:
                     auth_page = pg; break
-            
+
             if auth_page:
                 log_step("Mengklik Authorize di Canva...")
                 _click_canva_authorize_v2(auth_page, email)
                 time.sleep(5)
-            
-            log_step("Selesai. Cek dashboard Leonardo.")
+
+            # Tunggu Leonardo dashboard (max 60s)
+            log_step("Menunggu Leonardo dashboard...")
+            deadline_leo = time.time() + 60
+            while time.time() < deadline_leo:
+                cur = page.url.lower()
+                if "app.leonardo.ai" in cur and "/auth/" not in cur:
+                    break
+                # Cek popup auth
+                for pg in browser.pages:
+                    if "canva.com/api/oauth/authorize" in pg.url and pg != auth_page:
+                        log_step("Authorize popup muncul lagi...")
+                        _click_canva_authorize_v2(pg, email)
+                        auth_page = pg
+                time.sleep(2)
+
+            # Extract Leonardo cookies
+            log_step("Mengekstrak session Leonardo...")
+            all_cookies = page.context.cookies()
+            leo_cookies = [c for c in all_cookies if "leonardo.ai" in (c.get("domain") or "")]
+            cookie_str = "; ".join(f"{c['name']}={c['value']}" for c in leo_cookies)
+
+            # Extract JWT dari localStorage
+            jwt_token = ""
+            try:
+                jwt_token = page.evaluate("""() => {
+                    for (let i = 0; i < localStorage.length; i++) {
+                        const k = localStorage.key(i);
+                        const v = localStorage.getItem(k) || '';
+                        if (v.startsWith('eyJ') && v.length > 100) return v;
+                    }
+                    return '';
+                }""") or ""
+            except Exception: pass
+
+            if not cookie_str and not jwt_token:
+                sys.stdout.write(json.dumps({"status": "error", "message": "Gagal extract session Leonardo"}) + "\n")
+                sys.stdout.flush()
+                return False
+
+            sys.stdout.write(json.dumps({
+                "status": "success",
+                "cookie": cookie_str,
+                "jwt": jwt_token,
+                "balance": 150,
+                "left_team": False,
+            }) + "\n")
+            sys.stdout.flush()
             return True
+
     finally:
         try:
             asyncio.set_event_loop(None)
