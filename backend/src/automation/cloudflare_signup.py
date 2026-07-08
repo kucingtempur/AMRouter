@@ -796,11 +796,14 @@ def main():
         try:
             page_text_lower = page.evaluate("document.body.innerText").lower()
             log_step(f"Post-signup page snippet: {page_text_lower[:200]}")
+            # Only treat as already-registered if CF explicitly says so
             already_kw = [
                 "already registered", "already exists", "already in use",
                 "already taken", "account exists", "email exists",
-                "sudah terdaftar", "already have an account",
-                "email address is already"
+                "sudah terdaftar",
+                "email address is already",
+                # NOTE: "already have an account?" is NOT here — it's just the
+                # normal sign-in link on CF's signup page, not an error message
             ]
             for kw in already_kw:
                 if kw in page_text_lower:
@@ -810,18 +813,19 @@ def main():
         except Exception as e:
             log_step(f"Post-signup check error: {e}")
 
-        # Also check: if no "check your email" / "verify" success message → assume registered
-        if not email_already_registered:
-            try:
-                success_kw = ["check your email", "verify your email", "verification email", "link has been sent"]
-                if not any(kw in page_text_lower for kw in success_kw):
-                    # Not success AND not "already registered" → check URL
-                    # If still on signup page (no redirect), likely email exists (CF resent silently)
-                    if "sign-up" in page.url or "register" in page.url or page.url.endswith("/sign-up"):
-                        log_step(f"Still on signup URL after submit — treating as email_already_registered")
-                        email_already_registered = True
-            except Exception:
-                pass
+        # Detect success: "check your email" / verify message
+        signup_success_verify = False
+        try:
+            success_kw = ["check your email", "verify your email", "verification email", "link has been sent"]
+            if any(kw in page_text_lower for kw in success_kw):
+                signup_success_verify = True
+                log_step("Signup sukses: CF meminta verifikasi email")
+        except Exception:
+            pass
+
+        # NOTE: removed the overly-aggressive fallback that treated "still on signup URL"
+        # as already-registered — this caused new accounts to skip email verification,
+        # resulting in unverified logins where CF blocks token creation.
 
         if email_already_registered:
             # Navigate FRESH to /login (don't carry stale security_token from verify link)
